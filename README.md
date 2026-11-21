@@ -26,8 +26,6 @@ denied the request: guardrails: Pod "debug" violates 9 rule(s):
   <img alt="Admission flow: teams and Argo CD send Deployments, Pods and Jobs to the kube-apiserver; the API server sends an AdmissionReview over TLS to two guardrails-webhook replicas in the guardrails-system namespace, which read policy.yaml from a ConfigMap; allowed objects are stored in etcd, denied ones return every reason to the caller; cert-manager issues and rotates the serving certificate and injects the CA bundle into the API server's webhook configuration; the webhook exports decision, violation and break-glass metrics to Prometheus." src="docs/diagrams/admission-flow-light.svg" width="100%">
 </picture>
 
-<sub>Animated diagrams generated from <a href="docs/diagrams/diagrams.yaml">docs/diagrams/diagrams.yaml</a> with <a href="https://github.com/santoshmyakala/santoshmyakala/tree/main/tools/archdiagram">archdiagram</a>.</sub>
-
 ## Design decisions
 
 | Decision | Why |
