@@ -1,0 +1,103 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: guardrails-webhook
+  namespace: guardrails-system
+  labels: &labels
+    app.kubernetes.io/name: guardrails-webhook
+spec:
+  replicas: 2 # failurePolicy is Fail: a single replica would block deployments during its restarts
+  revisionHistoryLimit: 3
+  strategy:
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }
+  selector:
+    matchLabels: *labels
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: guardrails-webhook
+        team: platform
+        cost-center: platform-shared
+    spec:
+      serviceAccountName: guardrails-webhook
+      automountServiceAccountToken: false
+      priorityClassName: system-cluster-critical
+      terminationGracePeriodSeconds: 20
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault }
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: { app.kubernetes.io/name: guardrails-webhook }
+      containers:
+        - name: webhook
+          image: guardrails-webhook
+          args: ["--policy=/etc/guardrails/policy/policy.yaml"]
+          ports:
+            - { name: https, containerPort: 8443 }
+            - { name: ops, containerPort: 9090 }
+          readinessProbe:
+            httpGet: { path: /readyz, port: ops }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: ops }
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 50m, memory: 32Mi }
+            limits: { memory: 64Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: tls, mountPath: /etc/guardrails/tls, readOnly: true }
+            - { name: policy, mountPath: /etc/guardrails/policy, readOnly: true }
+      volumes:
+        - name: tls
+          secret: { secretName: guardrails-webhook-tls }
+        - name: policy
+          configMap: { name: guardrails-policy }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: guardrails-webhook
+  namespace: guardrails-system
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: guardrails-webhook }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: guardrails-webhook
+  namespace: guardrails-system
+  labels: { app.kubernetes.io/name: guardrails-webhook }
+spec:
+  selector: { app.kubernetes.io/name: guardrails-webhook }
+  ports:
+    - { name: https, port: 443, targetPort: https }
+    - { name: ops, port: 9090, targetPort: ops }
+---
+# Only the API server needs 8443 (its source address differs per cluster, so it is not pinned);
+# metrics are scraped from the monitoring namespace.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: guardrails-webhook
+  namespace: guardrails-system
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: guardrails-webhook }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - ports: [{ port: 8443 }]
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: monitoring }
+      ports: [{ port: 9090 }]
+  egress: [] # no outbound traffic at all

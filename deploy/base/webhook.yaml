@@ -1,0 +1,42 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: guardrails
+  annotations:
+    cert-manager.io/inject-ca-from: guardrails-system/guardrails-webhook
+webhooks:
+  - name: workloads.guardrails.platform
+    admissionReviewVersions: [v1]
+    sideEffects: None
+    failurePolicy: Fail # fail closed: an unavailable webhook must not let unchecked workloads in
+    timeoutSeconds: 5
+    matchPolicy: Equivalent
+    clientConfig:
+      service:
+        name: guardrails-webhook
+        namespace: guardrails-system
+        path: /validate
+        port: 443
+    # Keep these in sync with exemptNamespaces in policy.yaml. Exempting the webhook's own
+    # namespace avoids a deadlock where the webhook cannot start because it must admit itself.
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: NotIn
+          values: [kube-system, kube-public, kube-node-lease, guardrails-system, cert-manager]
+    rules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods]
+        scope: Namespaced
+      - apiGroups: [apps]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [deployments, statefulsets, daemonsets, replicasets]
+        scope: Namespaced
+      - apiGroups: [batch]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [jobs, cronjobs]
+        scope: Namespaced

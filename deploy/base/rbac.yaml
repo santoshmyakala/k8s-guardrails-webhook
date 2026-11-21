@@ -1,0 +1,7 @@
+# The webhook never calls the Kubernetes API, so its service account has no roles and no token.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: guardrails-webhook
+  namespace: guardrails-system
+automountServiceAccountToken: false
