@@ -75,14 +75,21 @@ admit kube-system '{"apiVersion":"v1","kind":"Pod","metadata":{"generateName":"e
 [ $rc -eq 0 ] && ok "exempt namespace is not checked" || fail "$out"
 
 echo "== metrics"
-kubectl -n guardrails-system port-forward deployment/guardrails-webhook 19090:9090 >/dev/null 2>&1 &
-pf=$!
-trap 'kill $pf 2>/dev/null || true' EXIT
-for i in $(seq 20); do curl -sf http://127.0.0.1:19090/metrics -o metrics.txt && break; sleep 1; done
+# Several replicas each keep their own counters, and a given admission call was handled by just one
+# of them, so scrape every pod and combine before asserting (a single port-forward would only see
+# one replica's view).
+: > metrics.txt
+port=19090
+for pod in $(kubectl -n guardrails-system get pods -l app.kubernetes.io/name=guardrails-webhook -o jsonpath='{.items[*].metadata.name}'); do
+  kubectl -n guardrails-system port-forward "pod/$pod" "$port:9090" >/dev/null 2>&1 &
+  pf=$!
+  for _ in $(seq 20); do curl -sf "http://127.0.0.1:$port/metrics" >> metrics.txt && break; sleep 1; done
+  kill $pf 2>/dev/null || true
+  port=$((port + 1))
+done
 grep -q 'guardrails_admission_requests_total{decision="denied",kind="Pod",operation="CREATE"}' metrics.txt \
   && grep -q 'guardrails_break_glass_total{namespace="orders"}' metrics.txt \
-  && ok "decisions and break-glass are exported as metrics" || fail "metrics missing: $(grep ^guardrails_ metrics.txt)"
-kill $pf
+  && ok "decisions and break-glass are exported as metrics" || fail "metrics missing: $(grep ^guardrails_ metrics.txt | sort -u)"
 
 echo "== fail closed"
 kubectl -n guardrails-system scale deployment/guardrails-webhook --replicas=0
