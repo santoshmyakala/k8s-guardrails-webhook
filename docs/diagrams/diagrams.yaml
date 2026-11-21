@@ -1,0 +1,44 @@
+- out: admission-flow
+  title: Platform guardrails at the Kubernetes API server
+  subtitle: Every workload is checked before it is stored · denials list every reason · fail closed · certificates rotate without restarts
+  grid: {dx: 240, dy: 180}
+  groups:
+    - {id: gs, label: guardrails-system, sub: Pod Security restricted, icon: shield, color: green, box: [2.6, -0.45, 3.9, 1.5]}
+  nodes:
+    - {id: dev, label: Teams · Argo CD, sub: kubectl apply / GitOps sync, icon: [users, argocd], at: [0, 0.6], color: gray}
+    - {id: api, label: kube-apiserver, sub: authn → authz → admission, icon: kubernetes, at: [1.2, 0.6], color: blue, pulse: true}
+    - {id: etcd, label: etcd, sub: only admitted objects, icon: database, at: [1.2, 1.5], color: blue}
+    - {id: wh, label: guardrails-webhook ×2, sub: Go · TLS 1.3 · PDB, icon: [go, shield], at: [2.6, 0.6], color: green, pulse: true}
+    - {id: pol, label: policy.yaml, sub: registries · digest · labels · limits · non-root, icon: doc, at: [3.9, 0.6], color: purple}
+    - {id: cm, label: cert-manager, sub: issues · rotates · injects CA, icon: certificate, at: [2.6, -0.45], color: teal}
+    - {id: prom, label: Prometheus, sub: decisions · violations · break-glass, icon: prometheus, at: [3.9, 1.5], color: amber}
+  edges:
+    - {from: dev, to: api, label: Deployment / Pod / Job, kind: data, packet: doc}
+    - {from: api, to: wh, label: AdmissionReview, kind: secure}
+    - {from: api, to: etcd, label: allowed, kind: data, packet: db}
+    - {from: api, to: dev, label: "denied: every reason", kind: deny, via: [[1.2, 1.05], [0, 1.05]], at: 0.5}
+    - {from: pol, to: wh, label: ConfigMap, kind: control}
+    - {from: cm, to: wh, label: serving cert, kind: control}
+    - {from: cm, to: api, label: injects caBundle, kind: control, via: [[1.2, -0.45]], at: 0.3}
+    - {from: wh, to: prom, label: /metrics, kind: async, via: [[2.6, 1.5]], at: 0.5}
+
+- out: github-actions
+  title: Delivery with GitHub Actions
+  subtitle: Pull requests are tested against a real API server in kind · main and tags publish a signed, multi-arch image with SBOM and provenance
+  grid: {dx: 265, dy: 150}
+  nodes:
+    - {id: pr, label: Pull request, icon: git, at: [0, 0], color: gray}
+    - {id: test, label: Go tests, sub: race · staticcheck · govulncheck, icon: [go, check], at: [1, 0], color: blue}
+    - {id: man, label: Manifests, sub: kustomize · kubeconform, icon: kubernetes, at: [1, 1], color: blue}
+    - {id: e2e, label: kind end-to-end, sub: cert-manager · real API server, icon: [kubernetes, check], at: [2, 0], color: green, pulse: true}
+    - {id: img, label: Image scan, sub: distroless · Trivy, icon: [docker, trivy], at: [2, 1], color: amber}
+    - {id: ghcr, label: GHCR, sub: linux/amd64 + arm64, icon: registry, at: [3, 0], color: purple}
+    - {id: sign, label: cosign + attestations, sub: keyless · SBOM · SLSA provenance, icon: [signature, sbom], at: [3, 1], color: green}
+  edges:
+    - {from: pr, to: test, kind: control}
+    - {from: pr, to: man, kind: control, via: [[0, 1]]}
+    - {from: test, to: e2e, kind: data}
+    - {from: man, to: e2e, kind: data}
+    - {from: e2e, to: ghcr, label: main / v*, kind: secure, packet: lock}
+    - {from: img, to: ghcr, kind: data}
+    - {from: ghcr, to: sign, label: by digest, kind: secure}

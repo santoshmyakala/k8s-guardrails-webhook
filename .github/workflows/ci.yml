@@ -1,0 +1,102 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: test -z "$(gofmt -l . | tee /dev/stderr)"
+      - run: go vet ./...
+      - run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
+      - name: Tests (race detector, coverage)
+        run: |
+          go test -race -covermode=atomic -coverprofile=cover.out ./...
+          go tool cover -func=cover.out | tail -1 | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: govulncheck (reachable vulnerabilities in code and the Go toolchain)
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...
+
+  manifests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      - name: kustomize build + kubeconform (strict, Kubernetes 1.34)
+        run: |
+          go install sigs.k8s.io/kustomize/kustomize/v5@v5.8.0
+          go install github.com/yannh/kubeconform/cmd/kubeconform@v0.7.0
+          for overlay in deploy/base deploy/overlays/e2e; do
+            kustomize build "$overlay" | kubeconform -strict -summary -kubernetes-version 1.34.0 -skip Issuer,Certificate
+          done
+
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          load: true
+          tags: guardrails-webhook:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Trivy (fail on HIGH/CRITICAL with a fix)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: guardrails-webhook:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+  e2e:
+    needs: [test, manifests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: helm/kind-action@ea822c7bf1874f08e5a491df991c228edffc3376 # v1.15.2
+        with:
+          cluster_name: guardrails
+      - name: Build and load the image into kind
+        run: |
+          docker build -t guardrails-webhook:e2e .
+          kind load docker-image guardrails-webhook:e2e --name guardrails
+      - name: End-to-end against the API server
+        run: test/e2e/run.sh
+      - name: Diagnostics
+        if: failure()
+        run: |
+          kubectl get pods -A -o wide
+          kubectl -n guardrails-system describe pods
+          kubectl -n guardrails-system logs -l app.kubernetes.io/name=guardrails-webhook --tail=100 --all-containers
+          kubectl get events -A --sort-by=.lastTimestamp | tail -40
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: gitleaks (checksum-verified)
+        run: |
+          v=8.30.1; base=https://github.com/gitleaks/gitleaks/releases/download/v$v
+          curl -sSLO "$base/gitleaks_${v}_linux_x64.tar.gz"; curl -sSLO "$base/gitleaks_${v}_checksums.txt"
+          sha256sum --ignore-missing -c "gitleaks_${v}_checksums.txt"
+          tar xzf "gitleaks_${v}_linux_x64.tar.gz" gitleaks
+          ./gitleaks git --redact --exit-code 1 .

@@ -1,0 +1,12 @@
+# Platform guardrails. Roll out with `enforcement: warn` first, watch
+# guardrails_violations_total per namespace, fix the offenders, then switch to deny.
+enforcement: deny
+exemptNamespaces: [kube-system, kube-public, kube-node-lease, guardrails-system, cert-manager]
+allowedRegistries:
+  - ghcr.io/santoshmyakala
+  - registry.k8s.io
+requireDigest: true
+requiredLabels: [team, cost-center]
+requireResources: true
+requireNonRoot: true
+allowBreakGlass: true

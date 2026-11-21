@@ -1,0 +1,13 @@
+# kind cluster: the image is loaded locally, and test images come from ghcr.io/example.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: [../../base]
+images:
+  - name: ghcr.io/santoshmyakala/k8s-guardrails-webhook
+    newName: guardrails-webhook
+    newTag: e2e
+configMapGenerator:
+  - name: guardrails-policy
+    namespace: guardrails-system
+    behavior: replace
+    files: [policy.yaml]

@@ -1,0 +1,29 @@
+# cert-manager issues and rotates the serving certificate and injects its CA into the
+# ValidatingWebhookConfiguration; the webhook reloads the rotated files without a restart.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: guardrails-selfsigned
+  namespace: guardrails-system
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: guardrails-webhook
+  namespace: guardrails-system
+spec:
+  secretName: guardrails-webhook-tls
+  dnsNames:
+    - guardrails-webhook.guardrails-system.svc
+    - guardrails-webhook.guardrails-system.svc.cluster.local
+  duration: 2160h # 90 days
+  renewBefore: 720h # 30 days
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Always
+  issuerRef:
+    name: guardrails-selfsigned
+    kind: Issuer
